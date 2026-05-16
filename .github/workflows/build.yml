@@ -40,7 +40,7 @@ jobs:
         run: |
           mkdir -p build_ci
           cd build_ci
-          cmake .. -DPICO_BOARD=${{ matrix.board }}
+          cmake .. -DPICO_BOARD=${{ matrix.board }}  -DENABLE_EDDSA=1
           make -j$(nproc)
 
       - name: Upload artifact
