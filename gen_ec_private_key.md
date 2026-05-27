@@ -1,0 +1,1 @@
+openssl ecparam -genkey -name secp256k1 -out ec_private_key.pem
