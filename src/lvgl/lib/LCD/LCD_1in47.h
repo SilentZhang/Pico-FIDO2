@@ -58,6 +58,7 @@ function:
 void LCD_1IN47_Init(UBYTE Scan_dir);
 void LCD_1IN47_Clear(UWORD Color);
 void LCD_1IN47_Display(UWORD *Image);
+void LCD_1IN47_SetWindows(UWORD Xstart, UWORD Ystart, UWORD Xend, UWORD Yend);
 void LCD_1IN47_DisplayWindows(UWORD Xstart, UWORD Ystart, UWORD Xend, UWORD Yend, UWORD *Image);
 void LCD_1IN47_DisplayPoint(UWORD X, UWORD Y, UWORD Color);
 void Handler_1IN47_LCD(int signo);
