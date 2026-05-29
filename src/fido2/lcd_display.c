@@ -24,14 +24,14 @@ static UWORD rgb_to_565(UBYTE r, UBYTE g, UBYTE b) {
     return ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
 }
 
-// 计算渐变色 - 从红色到蓝绿色（更漂亮）
+// 彩虹渐变：赤橙黄绿青蓝紫
 static void lcd_display_gradient(void) {
     UWORD j, i;
     UWORD line_buffer[64];
     UWORD width = LCD_1IN47.WIDTH;
     UWORD height = LCD_1IN47.HEIGHT;
 
-    printf("Drawing gradient...\n");
+    printf("Drawing rainbow gradient...\n");
 
     LCD_1IN47_SetWindows(0, 0, width, height);
     DEV_Digital_Write(LCD_DC_PIN, 1);
@@ -39,7 +39,6 @@ static void lcd_display_gradient(void) {
 
     // 逐行绘制渐变
     for (j = 0; j < height; j++) {
-        // 逐块发送当前行
         UWORD remaining = width;
         UWORD x_pos = 0;
         
@@ -49,14 +48,49 @@ static void lcd_display_gradient(void) {
             // 填充当前块的缓冲区
             for (i = 0; i < send_count; i++) {
                 float ratio = (float)(x_pos + i) / (float)width;
+                UBYTE r, g, b;
                 
-                // 从红色渐变到蓝绿色
-                UBYTE r = 255 - (UBYTE)(ratio * 255);
-                UBYTE g = (UBYTE)(ratio * 255);
-                UBYTE b = (UBYTE)(ratio * 255);
+                // 彩虹6段：红→橙→黄→绿→青→蓝→紫
+                if (ratio < 1.0f / 6.0f) {
+                    // 红 → 橙
+                    float t = ratio * 6.0f;
+                    r = 255;
+                    g = (UBYTE)(t * 165);
+                    b = 0;
+                } else if (ratio < 2.0f / 6.0f) {
+                    // 橙 → 黄
+                    float t = (ratio - 1.0f / 6.0f) * 6.0f;
+                    r = 255;
+                    g = 165 + (UBYTE)(t * (255 - 165));
+                    b = 0;
+                } else if (ratio < 3.0f / 6.0f) {
+                    // 黄 → 绿
+                    float t = (ratio - 2.0f / 6.0f) * 6.0f;
+                    r = 255 - (UBYTE)(t * 255);
+                    g = 255;
+                    b = 0;
+                } else if (ratio < 4.0f / 6.0f) {
+                    // 绿 → 青
+                    float t = (ratio - 3.0f / 6.0f) * 6.0f;
+                    r = 0;
+                    g = 255;
+                    b = (UBYTE)(t * 255);
+                } else if (ratio < 5.0f / 6.0f) {
+                    // 青 → 蓝
+                    float t = (ratio - 4.0f / 6.0f) * 6.0f;
+                    r = 0;
+                    g = 255 - (UBYTE)(t * 255);
+                    b = 255;
+                } else {
+                    // 蓝 → 紫
+                    float t = (ratio - 5.0f / 6.0f) * 6.0f;
+                    r = (UBYTE)(t * 128);
+                    g = 0;
+                    b = 255;
+                }
 
                 UWORD color = rgb_to_565(r, g, b);
-                // 转换字节序（LCD需要）
+                // 转换字节序
                 line_buffer[i] = ((color << 8) & 0xff00) | (color >> 8);
             }
             
@@ -67,7 +101,7 @@ static void lcd_display_gradient(void) {
     }
 
     DEV_Digital_Write(LCD_CS_PIN, 1);
-    printf("Gradient complete!\n");
+    printf("Rainbow complete!\n");
 }
 
 int lcd_display_red(void) {
