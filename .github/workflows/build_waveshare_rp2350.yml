@@ -1,0 +1,84 @@
+name: Build Waveshare RP2350 One Firmware
+
+on:
+  push:
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+  pull_request:
+  workflow_dispatch: # 允许手动触发
+
+env:
+  # 配置版本信息，与 bat 脚本保持一致
+  VERSION_MAJOR: 6
+  VERSION_MINOR: 6
+  TARGET_BOARD: waveshare_rp2350_one
+  PICO_SDK_PATH: ${{ github.workspace }}/pico-sdk
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive # 如果主项目有子模块
+
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          cmake \
+          gcc-arm-none-eabi \
+          libnewlib-arm-none-eabi \
+          build-essential \
+          ninja-build \
+          openssl
+
+    - name: Clone Pico SDK
+      run: |
+        git clone https://github.com/raspberrypi/pico-sdk.git ${{ env.PICO_SDK_PATH }}
+        cd ${{ env.PICO_SDK_PATH }}
+        git submodule update --init
+
+    - name: Generate EC Private Key
+      run: |
+        echo "[INFO] Generating temporary EC private key for secure boot..."
+        # 参考 gen_ec_private_key.md 中的命令
+        openssl ecparam -genkey -name secp256k1 -out ec_private_key.pem
+        echo "[INFO] Key generated at $(pwd)/ec_private_key.pem"
+
+    - name: Configure CMake
+      run: |
+        mkdir -p build_release
+        cd build_release
+        
+        cmake .. \
+          -G Ninja \
+          -DPICO_SDK_PATH="${{ env.PICO_SDK_PATH }}" \
+          -DPICO_BOARD=${{ env.TARGET_BOARD }} \
+          -DSECURE_BOOT_PKEY="${{ github.workspace }}/ec_private_key.pem" \
+          -DENABLE_EDDSA=1 \
+          -DCMAKE_BUILD_TYPE=MinSizeRel \
+          -DPICO_COPY_TO_RAM=0
+
+    - name: Compile Firmware
+      run: |
+        cd build_release
+        ninja -j $(nproc)
+
+    - name: Verify Build Output
+      run: |
+        if [ ! -f "build_release/pico_fido2.uf2" ]; then
+          echo "[ERROR] pico_fido2.uf2 not found!"
+          exit 1
+        fi
+        echo "[SUCCESS] Firmware built successfully."
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: pico_fido2_${{ env.TARGET_BOARD }}-v${{ env.VERSION_MAJOR }}.${{ env.VERSION_MINOR }}
+        path: build_release/pico_fido2.uf2
+        retention-days: 7
