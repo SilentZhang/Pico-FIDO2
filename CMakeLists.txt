@@ -82,6 +82,15 @@ else()
     message(STATUS "OTP Application: \t\t disabled")
 endif()
 
+option(ENABLE_LCD "Enable/disable LCD display" ON)
+if(ENABLE_LCD)
+    add_definitions(-DENABLE_LCD=1)
+    message(STATUS "LCD Display: \t\t\t enabled")
+else()
+    add_definitions(-DENABLE_LCD=0)
+    message(STATUS "LCD Display: \t\t\t disabled")
+endif()
+
 if(ENABLE_OTP_APP OR ENABLE_OATH_APP)
     set(USB_ITF_CCID 1)
     set(USB_ITF_WCID 1)
@@ -138,6 +147,15 @@ list(APPEND SOURCES
     ${CMAKE_CURRENT_LIST_DIR}/pico-openpgp/src/openpgp/cmd_reset_retry.c
     ${CMAKE_CURRENT_LIST_DIR}/pico-openpgp/src/openpgp/do.c
 )
+if(ENABLE_LCD)
+    list(APPEND SOURCES
+        ${CMAKE_CURRENT_LIST_DIR}/src/fido2/lcd_display.c
+        ${CMAKE_CURRENT_LIST_DIR}/src/fido2/picokey_extension.c
+        # LCD display support
+        ${CMAKE_CURRENT_LIST_DIR}/src/lvgl/lib/Config/DEV_Config.c
+        ${CMAKE_CURRENT_LIST_DIR}/src/lvgl/lib/LCD/LCD_1in47.c
+    )
+endif()
 if(ENABLE_OATH_APP)
     list(APPEND SOURCES
         ${CMAKE_CURRENT_LIST_DIR}/pico-fido/src/fido/oath.c
@@ -159,6 +177,14 @@ set(INCLUDES ${INCLUDES}
     ${CMAKE_CURRENT_LIST_DIR}/pico-openpgp/src/openpgp
     ${CMAKE_CURRENT_LIST_DIR}/pico-openpgp/src
 )
+if(ENABLE_LCD)
+    list(APPEND INCLUDES
+        ${CMAKE_CURRENT_LIST_DIR}/src/fido2
+        # LCD display support
+        ${CMAKE_CURRENT_LIST_DIR}/src/lvgl/lib/Config
+        ${CMAKE_CURRENT_LIST_DIR}/src/lvgl/lib/LCD
+    )
+endif()
 if(NOT ESP_PLATFORM)
     target_sources(pico_fido2 PUBLIC ${SOURCES})
     target_include_directories(pico_fido2 PUBLIC ${INCLUDES})
@@ -199,6 +225,9 @@ if(NOT ESP_PLATFORM)
         target_link_libraries(pico_fido2 PRIVATE pthread m)
     else()
         target_link_libraries(pico_fido2 PRIVATE pico_keys_sdk pico_stdlib pico_multicore hardware_flash hardware_sync hardware_adc pico_unique_id pico_aon_timer tinyusb_device tinyusb_board)
+        if(ENABLE_LCD)
+            target_link_libraries(pico_fido2 PRIVATE hardware_spi hardware_pwm hardware_i2c)
+        endif()
         pico_add_extra_outputs(${CMAKE_PROJECT_NAME})
     endif()
 endif()
