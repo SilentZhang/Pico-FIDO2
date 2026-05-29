@@ -2,12 +2,10 @@ name: Build Waveshare RP2350 One Firmware
 
 on:
   push:
-    branches: [ "main", "master" ]
     paths-ignore:
       - '**.md'
       - 'docs/**'
   pull_request:
-    branches: [ "main", "master" ]
   workflow_dispatch: # 允许手动触发
 
 env:
