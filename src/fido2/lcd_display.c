@@ -17,7 +17,9 @@
 
 #include "DEV_Config.h"
 #include "LCD_1in47.h"
+#include "GUI_Paint.h"
 #include <stdio.h>
+#include <string.h>
 
 #ifdef ENABLE_LCD
 
@@ -26,18 +28,60 @@
 #include "pico/time.h"
 #endif
 
+#define LINE_BUFFER_SIZE 64
+static UWORD line_buffer[LINE_BUFFER_SIZE];
+
 static float rainbow_offset = 0.0f;
+static float text_offset = 0.0f;
 static struct repeating_timer lcd_timer;
 
-// RGB565颜色合成
+static const char scroll_text[] = "  >>>>  Pico FIDO2 Rainbow Text Scrolling Demo  <<<<  ";
+
 static UWORD rgb_to_565(UBYTE r, UBYTE g, UBYTE b) {
     return ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
 }
 
-// 完全按照官方 LCD_1IN47_Clear() 的方式实现
-static void draw_rainbow(float offset) {
+static void get_rainbow_color(float ratio, UWORD *color) {
+    UBYTE r, g, b;
+
+    if (ratio < 1.0f / 6.0f) {
+        float t = ratio * 6.0f;
+        r = 255;
+        g = (UBYTE)(t * 165);
+        b = 0;
+    } else if (ratio < 2.0f / 6.0f) {
+        float t = (ratio - 1.0f / 6.0f) * 6.0f;
+        r = 255;
+        g = 165 + (UBYTE)(t * (255 - 165));
+        b = 0;
+    } else if (ratio < 3.0f / 6.0f) {
+        float t = (ratio - 2.0f / 6.0f) * 6.0f;
+        r = 255 - (UBYTE)(t * 255);
+        g = 255;
+        b = 0;
+    } else if (ratio < 4.0f / 6.0f) {
+        float t = (ratio - 3.0f / 6.0f) * 6.0f;
+        r = 0;
+        g = 255;
+        b = (UBYTE)(t * 255);
+    } else if (ratio < 5.0f / 6.0f) {
+        float t = (ratio - 4.0f / 6.0f) * 6.0f;
+        r = 0;
+        g = 255 - (UBYTE)(t * 255);
+        b = 255;
+    } else {
+        float t = (ratio - 5.0f / 6.0f) * 6.0f;
+        r = (UBYTE)(t * 128);
+        g = 0;
+        b = 255;
+    }
+
+    *color = rgb_to_565(r, g, b);
+    *color = ((*color << 8) & 0xff00) | (*color >> 8);
+}
+
+static void draw_rainbow_background(void) {
     UWORD j, i;
-    UWORD line_buffer[64];
     UWORD width = LCD_1IN47.WIDTH;
     UWORD height = LCD_1IN47.HEIGHT;
 
@@ -46,53 +90,21 @@ static void draw_rainbow(float offset) {
     DEV_Digital_Write(LCD_CS_PIN, 0);
 
     for (j = 0; j < height; j++) {
+        float ratio = (float)j / (float)height;
+        ratio += rainbow_offset;
+        while (ratio > 1.0f) ratio -= 1.0f;
+
+        UWORD bg_color;
+        get_rainbow_color(ratio, &bg_color);
+
         UWORD remaining = width;
         UWORD x_pos = 0;
 
         while (remaining > 0) {
-            UWORD send_count = (remaining > 64) ? 64 : remaining;
+            UWORD send_count = (remaining > LINE_BUFFER_SIZE) ? LINE_BUFFER_SIZE : remaining;
 
             for (i = 0; i < send_count; i++) {
-                float ratio = ((float)(x_pos + i) / (float)width) + offset;
-                while (ratio > 1.0f) ratio -= 1.0f;
-
-                UBYTE r, g, b;
-
-                if (ratio < 1.0f / 6.0f) {
-                    float t = ratio * 6.0f;
-                    r = 255;
-                    g = (UBYTE)(t * 165);
-                    b = 0;
-                } else if (ratio < 2.0f / 6.0f) {
-                    float t = (ratio - 1.0f / 6.0f) * 6.0f;
-                    r = 255;
-                    g = 165 + (UBYTE)(t * (255 - 165));
-                    b = 0;
-                } else if (ratio < 3.0f / 6.0f) {
-                    float t = (ratio - 2.0f / 6.0f) * 6.0f;
-                    r = 255 - (UBYTE)(t * 255);
-                    g = 255;
-                    b = 0;
-                } else if (ratio < 4.0f / 6.0f) {
-                    float t = (ratio - 3.0f / 6.0f) * 6.0f;
-                    r = 0;
-                    g = 255;
-                    b = (UBYTE)(t * 255);
-                } else if (ratio < 5.0f / 6.0f) {
-                    float t = (ratio - 4.0f / 6.0f) * 6.0f;
-                    r = 0;
-                    g = 255 - (UBYTE)(t * 255);
-                    b = 255;
-                } else {
-                    float t = (ratio - 5.0f / 6.0f) * 6.0f;
-                    r = (UBYTE)(t * 128);
-                    g = 0;
-                    b = 255;
-                }
-
-                UWORD color = rgb_to_565(r, g, b);
-                color = ((color << 8) & 0xff00) | (color >> 8);
-                line_buffer[i] = color;
+                line_buffer[i] = bg_color;
             }
 
             DEV_SPI_Write_nByte((uint8_t *)line_buffer, send_count * 2);
@@ -104,17 +116,81 @@ static void draw_rainbow(float offset) {
     DEV_Digital_Write(LCD_CS_PIN, 1);
 }
 
-// 完全按照官方例子的 repeating timer callback
+static void draw_char_pixel(UWORD x, UWORD y, UWORD color) {
+    LCD_1IN47_DisplayPoint(x, y, color);
+}
+
+static void draw_char_with_color(UWORD x, UWORD y, char ch, sFONT *font, UWORD color) {
+    UWORD Page, Column;
+    UWORD width = font->Width;
+    UWORD height = font->Height;
+
+    uint32_t Char_Offset = (ch - ' ') * height * (width / 8 + (width % 8 ? 1 : 0));
+    const unsigned char *ptr = &font->table[Char_Offset];
+
+    for (Page = 0; Page < height; Page++) {
+        for (Column = 0; Column < width; Column++) {
+            if (*ptr & (0x80 >> (Column % 8))) {
+                draw_char_pixel(x + Column, y + Page, color);
+            }
+
+            if (Column % 8 == 7)
+                ptr++;
+        }
+        if (width % 8 != 0)
+            ptr++;
+    }
+}
+
+static void draw_rainbow_text(UWORD y_pos, sFONT *font) {
+    int text_len = strlen(scroll_text);
+    int char_width = font->Width;
+
+    int scroll_chars = (int)(text_offset / char_width);
+    float char_fraction = (text_offset - scroll_chars * char_width) / (float)char_width;
+
+    int start_x = -(int)(char_fraction * char_width);
+
+    for (int i = 0; i < text_len + 2; i++) {
+        int idx = (scroll_chars + i) % text_len;
+        char ch = scroll_text[idx];
+
+        int x_pos = start_x + i * char_width;
+        if (x_pos > (int)LCD_1IN47.WIDTH) continue;
+        if (x_pos + char_width < 0) continue;
+
+        float color_ratio = (float)(scroll_chars + i) / (float)text_len;
+        color_ratio += rainbow_offset;
+        while (color_ratio > 1.0f) color_ratio -= 1.0f;
+
+        UWORD color;
+        get_rainbow_color(color_ratio, &color);
+
+        draw_char_with_color((UWORD)x_pos, y_pos, ch, font, color);
+    }
+}
+
 static bool lcd_animation_callback(struct repeating_timer *t) {
     (void)t;
-    draw_rainbow(rainbow_offset);
-    rainbow_offset += 0.01f;
+
+    draw_rainbow_background();
+
+    UWORD text_y = (LCD_1IN47.HEIGHT - Font16.Height) / 2;
+    draw_rainbow_text(text_y, &Font16);
+
+    rainbow_offset += 0.002f;
     if (rainbow_offset > 1.0f) rainbow_offset = 0.0f;
+
+    text_offset += 1.5f;
+    if (text_offset > Font16.Width * strlen(scroll_text)) {
+        text_offset = 0.0f;
+    }
+
     return true;
 }
 
 int lcd_display_red() {
-    printf("=== Starting LCD Rainbow ===\n");
+    printf("=== Starting LCD Rainbow Text Scroll ===\n");
 
     if (DEV_Module_Init() != 0) {
         printf("ERROR: DEV_Module_Init failed!\n");
@@ -124,9 +200,8 @@ int lcd_display_red() {
     DEV_SET_PWM(90);
     LCD_1IN47_Init(VERTICAL);
 
-    // 完全按照官方例子启动 repeating timer！
-    add_repeating_timer_ms(50, lcd_animation_callback, NULL, &lcd_timer);
-    printf("LCD timer started!\n");
+    add_repeating_timer_ms(30, lcd_animation_callback, NULL, &lcd_timer);
+    printf("LCD rainbow text animation started!\n");
 
     return 0;
 }

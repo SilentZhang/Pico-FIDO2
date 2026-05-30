@@ -154,6 +154,8 @@ if(ENABLE_LCD)
         # LCD display support
         ${CMAKE_CURRENT_LIST_DIR}/src/lvgl/lib/Config/DEV_Config.c
         ${CMAKE_CURRENT_LIST_DIR}/src/lvgl/lib/LCD/LCD_1in47.c
+        ${CMAKE_CURRENT_LIST_DIR}/src/lvgl/lib/GUI/GUI_Paint.c
+        ${CMAKE_CURRENT_LIST_DIR}/src/lvgl/lib/Fonts/font16.c
     )
 endif()
 if(ENABLE_OATH_APP)
@@ -183,6 +185,8 @@ if(ENABLE_LCD)
         # LCD display support
         ${CMAKE_CURRENT_LIST_DIR}/src/lvgl/lib/Config
         ${CMAKE_CURRENT_LIST_DIR}/src/lvgl/lib/LCD
+        ${CMAKE_CURRENT_LIST_DIR}/src/lvgl/lib/GUI
+        ${CMAKE_CURRENT_LIST_DIR}/src/lvgl/lib/Fonts
     )
 endif()
 if(NOT ESP_PLATFORM)

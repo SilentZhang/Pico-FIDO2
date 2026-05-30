@@ -1,6 +1,6 @@
 /**
   ******************************************************************************
-  * @file    Font12.c
+  * @file    font12CN.c
   * @author  MCD Application Team
   * @version V1.0.0
   * @date    18-February-2014
