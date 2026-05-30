@@ -28,14 +28,14 @@
 #include "pico/time.h"
 #endif
 
-#define TEXT_HEIGHT 20
+#define TEXT_HEIGHT 28
 static UBYTE *text_buffer = NULL;
 
 static float rainbow_offset = 0.0f;
 static float text_offset = 0.0f;
 static struct repeating_timer lcd_timer;
 
-static const char scroll_text[] = "  >>>>  Pico FIDO2 Rainbow Text Scrolling Demo  <<<<  ";
+static const char scroll_text[] = "  >>>>  Pico FIDO2 Rainbow  <<<<  ";
 
 static UWORD rgb_to_565(UBYTE r, UBYTE g, UBYTE b) {
     return ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
@@ -156,7 +156,7 @@ static bool lcd_animation_callback(struct repeating_timer *t) {
     (void)t;
 
     fill_text_buffer_black();
-    draw_rainbow_text_to_buffer(&Font16);
+    draw_rainbow_text_to_buffer(&Font24);
 
     UWORD y_start = (LCD_1IN47.HEIGHT - TEXT_HEIGHT) / 2;
     LCD_1IN47_SetWindows(0, y_start, LCD_1IN47.WIDTH, y_start + TEXT_HEIGHT);
@@ -169,7 +169,7 @@ static bool lcd_animation_callback(struct repeating_timer *t) {
     if (rainbow_offset > 1.0f) rainbow_offset = 0.0f;
 
     text_offset += 0.5f;
-    if (text_offset >= Font16.Width * strlen(scroll_text)) {
+    if (text_offset >= Font24.Width * strlen(scroll_text)) {
         text_offset = 0.0f;
     }
 

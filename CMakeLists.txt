@@ -156,6 +156,8 @@ if(ENABLE_LCD)
         ${CMAKE_CURRENT_LIST_DIR}/src/lvgl/lib/LCD/LCD_1in47.c
         ${CMAKE_CURRENT_LIST_DIR}/src/lvgl/lib/GUI/GUI_Paint.c
         ${CMAKE_CURRENT_LIST_DIR}/src/lvgl/lib/Fonts/font16.c
+        ${CMAKE_CURRENT_LIST_DIR}/src/lvgl/lib/Fonts/font20.c
+        ${CMAKE_CURRENT_LIST_DIR}/src/lvgl/lib/Fonts/font24.c
     )
 endif()
 if(ENABLE_OATH_APP)
