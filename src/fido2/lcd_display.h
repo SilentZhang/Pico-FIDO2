@@ -19,6 +19,7 @@
 #define _LCD_DISPLAY_H_
 
 int lcd_display_red(void);
+void lcd_display_otp(const char *otp_code, int len);
+void lcd_toggle_display(void);
 
 #endif /* _LCD_DISPLAY_H_ */
-
