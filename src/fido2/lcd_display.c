@@ -231,7 +231,7 @@ static void find_first_totp_credential(void) {
     }
 }
 
-static void draw_scrolling_totp(void) {
+static void draw_scrolling_totp() {
     time_t now_sec = get_rtc_time();
     uint64_t time_val = (uint64_t) now_sec / TOTP_PERIOD;
     uint32_t remaining = TOTP_PERIOD - ((uint32_t) now_sec % TOTP_PERIOD);
