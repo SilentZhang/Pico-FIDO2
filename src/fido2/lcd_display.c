@@ -28,6 +28,9 @@
 #include "pico/time.h"
 #endif
 
+#define TEXT_HEIGHT 20
+static UBYTE *text_buffer = NULL;
+
 static float rainbow_offset = 0.0f;
 static float text_offset = 0.0f;
 static struct repeating_timer lcd_timer;
@@ -74,18 +77,19 @@ static void get_rainbow_color(float ratio, UWORD *color) {
     }
 
     *color = rgb_to_565(r, g, b);
-    *color = ((*color << 8) & 0xff00) | (*color >> 8);
 }
 
-static void draw_black_background(void) {
-    LCD_1IN47_Clear(BLACK);
+static void set_pixel_in_buffer(UWORD x, UWORD y, UWORD color) {
+    if (x >= LCD_1IN47.WIDTH || y >= TEXT_HEIGHT) return;
+    
+    UDOUBLE Addr = x * 2 + y * LCD_1IN47.WIDTH * 2;
+    text_buffer[Addr] = (UBYTE)(color >> 8);
+    text_buffer[Addr + 1] = (UBYTE)(color & 0xFF);
 }
 
-static void draw_char_pixel(UWORD x, UWORD y, UWORD color) {
-    LCD_1IN47_DisplayPoint(x, y, color);
-}
+static void draw_char_to_buffer(UWORD x, UWORD y, char ch, sFONT *font, UWORD color) {
+    if (y >= TEXT_HEIGHT || x >= LCD_1IN47.WIDTH) return;
 
-static void draw_char_with_color(UWORD x, UWORD y, char ch, sFONT *font, UWORD color) {
     UWORD Page, Column;
     UWORD width = font->Width;
     UWORD height = font->Height;
@@ -94,27 +98,40 @@ static void draw_char_with_color(UWORD x, UWORD y, char ch, sFONT *font, UWORD c
     const unsigned char *ptr = &font->table[Char_Offset];
 
     for (Page = 0; Page < height; Page++) {
+        if (y + Page >= TEXT_HEIGHT) break;
+        
         for (Column = 0; Column < width; Column++) {
+            if (x + Column >= LCD_1IN47.WIDTH) break;
+            
             if (*ptr & (0x80 >> (Column % 8))) {
-                draw_char_pixel(x + Column, y + Page, color);
+                set_pixel_in_buffer(x + Column, y + Page, color);
             }
-
-            if (Column % 8 == 7)
-                ptr++;
+            
+            if (Column % 8 == 7) ptr++;
         }
-        if (width % 8 != 0)
-            ptr++;
+        if (width % 8 != 0) ptr++;
     }
 }
 
-static void draw_rainbow_text(UWORD y_pos, sFONT *font) {
+static void fill_text_buffer_black(void) {
+    UWORD black = rgb_to_565(0, 0, 0);
+    for (UWORD y = 0; y < TEXT_HEIGHT; y++) {
+        for (UWORD x = 0; x < LCD_1IN47.WIDTH; x++) {
+            set_pixel_in_buffer(x, y, black);
+        }
+    }
+}
+
+static void draw_rainbow_text_to_buffer(sFONT *font) {
     int text_len = strlen(scroll_text);
     int char_width = font->Width;
+    int char_height = font->Height;
 
     int scroll_chars = (int)(text_offset / char_width);
     float char_fraction = (text_offset - scroll_chars * char_width) / (float)char_width;
-
     int start_x = -(int)(char_fraction * char_width);
+
+    int text_y = (TEXT_HEIGHT - char_height) / 2;
 
     for (int i = 0; i < text_len + 2; i++) {
         int idx = (scroll_chars + i) % text_len;
@@ -131,23 +148,28 @@ static void draw_rainbow_text(UWORD y_pos, sFONT *font) {
         UWORD color;
         get_rainbow_color(color_ratio, &color);
 
-        draw_char_with_color((UWORD)x_pos, y_pos, ch, font, color);
+        draw_char_to_buffer((UWORD)x_pos, (UWORD)text_y, ch, font, color);
     }
 }
 
 static bool lcd_animation_callback(struct repeating_timer *t) {
     (void)t;
 
-    draw_black_background();
+    fill_text_buffer_black();
+    draw_rainbow_text_to_buffer(&Font16);
 
-    UWORD text_y = (LCD_1IN47.HEIGHT - Font16.Height) / 2;
-    draw_rainbow_text(text_y, &Font16);
+    UWORD y_start = (LCD_1IN47.HEIGHT - TEXT_HEIGHT) / 2;
+    LCD_1IN47_SetWindows(0, y_start, LCD_1IN47.WIDTH, y_start + TEXT_HEIGHT);
+    DEV_Digital_Write(LCD_DC_PIN, 1);
+    DEV_Digital_Write(LCD_CS_PIN, 0);
+    DEV_SPI_Write_nByte(text_buffer, LCD_1IN47.WIDTH * TEXT_HEIGHT * 2);
+    DEV_Digital_Write(LCD_CS_PIN, 1);
 
     rainbow_offset += 0.005f;
     if (rainbow_offset > 1.0f) rainbow_offset = 0.0f;
 
-    text_offset += 1.0f;
-    if (text_offset > Font16.Width * strlen(scroll_text)) {
+    text_offset += 0.5f;
+    if (text_offset >= Font16.Width * strlen(scroll_text)) {
         text_offset = 0.0f;
     }
 
@@ -165,7 +187,15 @@ int lcd_display_red() {
     DEV_SET_PWM(90);
     LCD_1IN47_Init(VERTICAL);
 
-    add_repeating_timer_ms(30, lcd_animation_callback, NULL, &lcd_timer);
+    LCD_1IN47_Clear(BLACK);
+
+    text_buffer = (UBYTE *)malloc(LCD_1IN47.WIDTH * TEXT_HEIGHT * 2);
+    if (!text_buffer) {
+        printf("ERROR: Failed to allocate text buffer!\n");
+        return -1;
+    }
+
+    add_repeating_timer_ms(20, lcd_animation_callback, NULL, &lcd_timer);
     printf("LCD rainbow text animation started!\n");
 
     return 0;
