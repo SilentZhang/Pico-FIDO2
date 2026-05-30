@@ -28,9 +28,6 @@
 #include "pico/time.h"
 #endif
 
-#define LINE_BUFFER_SIZE 64
-static UWORD line_buffer[LINE_BUFFER_SIZE];
-
 static float rainbow_offset = 0.0f;
 static float text_offset = 0.0f;
 static struct repeating_timer lcd_timer;
@@ -80,40 +77,8 @@ static void get_rainbow_color(float ratio, UWORD *color) {
     *color = ((*color << 8) & 0xff00) | (*color >> 8);
 }
 
-static void draw_rainbow_background(void) {
-    UWORD j, i;
-    UWORD width = LCD_1IN47.WIDTH;
-    UWORD height = LCD_1IN47.HEIGHT;
-
-    LCD_1IN47_SetWindows(0, 0, width, height);
-    DEV_Digital_Write(LCD_DC_PIN, 1);
-    DEV_Digital_Write(LCD_CS_PIN, 0);
-
-    for (j = 0; j < height; j++) {
-        float ratio = (float)j / (float)height;
-        ratio += rainbow_offset;
-        while (ratio > 1.0f) ratio -= 1.0f;
-
-        UWORD bg_color;
-        get_rainbow_color(ratio, &bg_color);
-
-        UWORD remaining = width;
-        UWORD x_pos = 0;
-
-        while (remaining > 0) {
-            UWORD send_count = (remaining > LINE_BUFFER_SIZE) ? LINE_BUFFER_SIZE : remaining;
-
-            for (i = 0; i < send_count; i++) {
-                line_buffer[i] = bg_color;
-            }
-
-            DEV_SPI_Write_nByte((uint8_t *)line_buffer, send_count * 2);
-            remaining -= send_count;
-            x_pos += send_count;
-        }
-    }
-
-    DEV_Digital_Write(LCD_CS_PIN, 1);
+static void draw_black_background(void) {
+    LCD_1IN47_Clear(BLACK);
 }
 
 static void draw_char_pixel(UWORD x, UWORD y, UWORD color) {
@@ -173,15 +138,15 @@ static void draw_rainbow_text(UWORD y_pos, sFONT *font) {
 static bool lcd_animation_callback(struct repeating_timer *t) {
     (void)t;
 
-    draw_rainbow_background();
+    draw_black_background();
 
     UWORD text_y = (LCD_1IN47.HEIGHT - Font16.Height) / 2;
     draw_rainbow_text(text_y, &Font16);
 
-    rainbow_offset += 0.002f;
+    rainbow_offset += 0.005f;
     if (rainbow_offset > 1.0f) rainbow_offset = 0.0f;
 
-    text_offset += 1.5f;
+    text_offset += 1.0f;
     if (text_offset > Font16.Width * strlen(scroll_text)) {
         text_offset = 0.0f;
     }
