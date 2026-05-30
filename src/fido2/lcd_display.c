@@ -37,23 +37,25 @@ extern const mbedtls_md_info_t *get_oath_md_info(uint8_t alg);
 #define LINE_HEIGHT 24
 #define NUM_LINES 3
 #define TOTP_PERIOD 30
+#define MAX_TOTP_CRED 3
 
 #define TAG_NAME            0x71
 #define TAG_KEY             0x73
 #define OATH_TYPE_TOTP      0x20
 #define OATH_TYPE_MASK      0xf0
+#define EF_RTC_OFFSET       0xBB04
+
+typedef struct {
+    uint8_t key[64];
+    int key_len;
+    char name[32]; // 限制在 32 字符内
+} totp_cred_t;
 
 static UBYTE *text_buffer = NULL;
 static struct repeating_timer lcd_timer;
-static char current_otp[12] = {0};
-static int current_otp_len = 0;
-static uint8_t current_otp_key[64] = {0};
-static int current_otp_key_len = 0;
-static uint32_t last_totp_time = 0;
-static uint8_t oath_cred_idx = 0xFF;
+static totp_cred_t totp_creds[MAX_TOTP_CRED];
+static int num_totp_creds = 0;
 static float rainbow_offset = 0.0f;
-static float text_offset = 0.0f;
-static char current_cred_name[64] = {0};
 
 static UWORD rgb_to_565(UBYTE r, UBYTE g, UBYTE b) {
     return ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
@@ -182,12 +184,29 @@ static int calculate_totp(const uint8_t *key, size_t key_len, uint64_t time_val,
     return 0;
 }
 
-static void find_first_totp_credential(void) {
-    oath_cred_idx = 0xFF;
-    current_otp_key_len = 0;
-    memset(current_cred_name, 0, sizeof(current_cred_name));
+static void extract_org_name(char *name) {
+    char *colon_pos = strchr(name, ':');
+    if (colon_pos) {
+        *colon_pos = '\0';
+    } else {
+        char *at_pos = strchr(name, '@');
+        if (at_pos) {
+            *at_pos = '\0';
+        }
+    }
+    
+    // 确保名称不超过 20 字符（足够小，不会溢出）
+    size_t len = strlen(name);
+    if (len > 20) {
+        name[20] = '\0';
+    }
+}
 
-    for (int i = 0; i < 255; i++) {
+static void find_totp_credentials(void) {
+    num_totp_creds = 0;
+    memset(totp_creds, 0, sizeof(totp_creds));
+
+    for (int i = 0; i < 255 && num_totp_creds < MAX_TOTP_CRED; i++) {
         file_t *ef = search_dynamic_file((uint16_t)(0xBA00 + i));
         if (file_has_data(ef)) {
             const uint8_t *ef_data = file_get_data(ef);
@@ -199,107 +218,77 @@ static void find_first_totp_credential(void) {
             asn1_ctx_t key_ctx, name_ctx;
             if (asn1_find_tag(&ctx, TAG_KEY, &key_ctx) == true) {
                 if ((key_ctx.data[0] & OATH_TYPE_MASK) == OATH_TYPE_TOTP) {
-                    oath_cred_idx = i;
-                    current_otp_key_len = key_ctx.len;
-                    if (current_otp_key_len > sizeof(current_otp_key)) {
-                        current_otp_key_len = sizeof(current_otp_key);
-                    }
-                    memcpy(current_otp_key, key_ctx.data, current_otp_key_len);
-                    
+                    totp_cred_t *cred = &totp_creds[num_totp_creds];
+                    cred->key_len = key_ctx.len;
+                    memcpy(cred->key, key_ctx.data, key_ctx.len);
+
                     if (asn1_find_tag(&ctx, TAG_NAME, &name_ctx) == true) {
                         int name_len = name_ctx.len;
-                        if (name_len > sizeof(current_cred_name) - 1) {
-                            name_len = sizeof(current_cred_name) - 1;
-                        }
-                        memcpy(current_cred_name, name_ctx.data, name_len);
-                        current_cred_name[name_len] = '\0';
-                        
-                        char *colon_pos = strchr(current_cred_name, ':');
-                        if (colon_pos != NULL) {
-                            *colon_pos = '\0';
-                        } else {
-                            char *at_pos = strchr(current_cred_name, '@');
-                            if (at_pos != NULL) {
-                                *at_pos = '\0';
-                            }
-                        }
+                        if (name_len > sizeof(cred->name) - 1) name_len = sizeof(cred->name) - 1;
+                        memcpy(cred->name, name_ctx.data, name_len);
+                        cred->name[name_len] = '\0';
+                        extract_org_name(cred->name);
                     }
-                    return;
+                    num_totp_creds++;
                 }
             }
         }
     }
 }
 
-static void draw_scrolling_totp() {
+static bool is_time_synced(void) {
+    file_t *ef = search_dynamic_file(EF_RTC_OFFSET);
+    if (file_has_data(ef)) {
+        const uint8_t *data = file_get_data(ef);
+        if (file_get_size(ef) >= 1 && data[0] == 0xAA) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void draw_three_totp_lines(void) {
     time_t now_sec = get_rtc_time();
     uint64_t time_val = (uint64_t) now_sec / TOTP_PERIOD;
     uint32_t remaining = TOTP_PERIOD - ((uint32_t) now_sec % TOTP_PERIOD);
 
-    if (time_val != last_totp_time || current_otp_key_len == 0) {
-        last_totp_time = (uint32_t) time_val;
-
-        if (current_otp_key_len == 0) {
-            find_first_totp_credential();
-        }
-
-        if (current_otp_key_len > 0) {
-            calculate_totp(current_otp_key, current_otp_key_len, time_val, current_otp, &current_otp_len);
-        } else {
-            strcpy(current_otp, "No TOTP");
-            current_otp_len = 7;
-        }
-    }
-
     fill_text_buffer_black();
-
-    int char_width = Font24.Width;
-    int scroll_chars = (int)(text_offset / char_width);
-    float char_fraction = (text_offset - scroll_chars * char_width) / (float)char_width;
-    int start_x = -(int)(char_fraction * char_width);
-
-    int line1_y = LINE_HEIGHT;
-
-    char scroll_text[100];
-    if (current_otp_key_len > 0 && current_cred_name[0] != '\0') {
-        char countdown[8];
-        sprintf(countdown, "(%ds)", (unsigned int)remaining);
-        sprintf(scroll_text, "  [%lld] %s: %s %s  ", (long long)now_sec, current_cred_name, current_otp, countdown);
-    } else if (current_otp_key_len > 0) {
-        char countdown[8];
-        sprintf(countdown, "(%ds)", (unsigned int)remaining);
-        sprintf(scroll_text, "  [%lld] %s %s  ", (long long)now_sec, current_otp, countdown);
-    } else {
-        sprintf(scroll_text, "  [%lld] %s  ", (long long)now_sec, current_otp);
+    sFONT *font = &Font24;
+    
+    char line_text[128];
+    bool synced = is_time_synced();
+    
+    for (int i = 0; i < NUM_LINES; i++) {
+        if (i < num_totp_creds) {
+            char otp[12];
+            int otp_len = 0;
+            calculate_totp(totp_creds[i].key, totp_creds[i].key_len, time_val, otp, &otp_len);
+            
+            if (i == 0 && synced) {
+                snprintf(line_text, sizeof(line_text), "[*] %.20s: %s (%lus)", totp_creds[i].name, otp, (unsigned long)remaining);
+            } else if (i == 0) {
+                snprintf(line_text, sizeof(line_text), "[ ] %.20s: %s (%lus)", totp_creds[i].name, otp, (unsigned long)remaining);
+            } else {
+                snprintf(line_text, sizeof(line_text), "    %.20s: %s", totp_creds[i].name, otp);
+            }
+        } else {
+            strcpy(line_text, "    -");
+        }
+        
+        UWORD x = 0;
+        float char_rainbow = rainbow_offset + (float)i / NUM_LINES;
+        for (int j = 0; line_text[j]; j++) {
+            float ratio = char_rainbow + (float)j / 64.0f;
+            while (ratio >= 1.0f) ratio -= 1.0f;
+            UWORD color;
+            get_rainbow_color(ratio, &color);
+            draw_char_to_buffer(x, i * LINE_HEIGHT, line_text[j], font, color);
+            x += font->Width;
+        }
     }
-
-    int text_len = strlen(scroll_text);
-
-    for (int i = 0; i < text_len + 2; i++) {
-        int idx = (scroll_chars + i) % text_len;
-        char ch = scroll_text[idx];
-
-        int x_pos = start_x + i * char_width;
-        if (x_pos > (int)LCD_1IN47.WIDTH) continue;
-        if (x_pos + char_width < 0) continue;
-
-        float color_ratio = (float)(scroll_chars + i) / (float)text_len;
-        color_ratio += rainbow_offset;
-        while (color_ratio > 1.0f) color_ratio -= 1.0f;
-
-        UWORD color;
-        get_rainbow_color(color_ratio, &color);
-
-        draw_char_to_buffer((UWORD)x_pos, (UWORD)line1_y, ch, &Font24, color);
-    }
-
+    
     rainbow_offset += 0.005f;
-    if (rainbow_offset > 1.0f) rainbow_offset = 0.0f;
-
-    text_offset += 2.0f;
-    if (text_offset >= char_width * text_len) {
-        text_offset = 0.0f;
-    }
+    if (rainbow_offset >= 1.0f) rainbow_offset = 0.0f;
 }
 
 static void flush_buffer_to_lcd(void) {
@@ -314,7 +303,7 @@ static void flush_buffer_to_lcd(void) {
 static bool lcd_animation_callback(struct repeating_timer *t) {
     (void)t;
 
-    draw_scrolling_totp();
+    draw_three_totp_lines();
     flush_buffer_to_lcd();
     return true;
 }
@@ -346,9 +335,15 @@ int lcd_display_red(void) {
         return -1;
     }
 
-    add_repeating_timer_ms(20, lcd_animation_callback, NULL, &lcd_timer);
-    printf("[INFO] LCD animation started!\n");
+    find_totp_credentials();
+    draw_three_totp_lines();
+    flush_buffer_to_lcd();
 
+#ifdef PICO_PLATFORM
+    add_repeating_timer_ms(20, lcd_animation_callback, NULL, &lcd_timer);
+#endif
+
+    printf("[INFO] LCD animation started!\n");
     return 0;
 }
 
