@@ -37,7 +37,7 @@ extern const mbedtls_md_info_t *get_oath_md_info(uint8_t alg);
 #define LINE_HEIGHT 19
 #define NUM_LINES 5
 #define TOTP_PERIOD 30
-#define MAX_TOTP_CRED 10
+#define MAX_TOTP_CRED 64
 
 #define TAG_NAME            0x71
 #define TAG_KEY             0x73
@@ -53,7 +53,7 @@ typedef struct {
 
 static UBYTE *text_buffer = NULL;
 static struct repeating_timer lcd_timer;
-static totp_cred_t totp_creds[MAX_TOTP_CRED];
+static totp_cred_t *totp_creds = NULL;
 static int num_totp_creds = 0;
 static float rainbow_offset = 0.0f;
 static float text_offset = 0.0f;
@@ -207,9 +207,43 @@ static void extract_org_name(char *name) {
 
 static void find_totp_credentials(void) {
     num_totp_creds = 0;
-    memset(totp_creds, 0, sizeof(totp_creds));
 
-    for (int i = 0; i < 255 && num_totp_creds < MAX_TOTP_CRED; i++) {
+    if (totp_creds != NULL) {
+        free(totp_creds);
+        totp_creds = NULL;
+    }
+
+    int temp_count = 0;
+    for (int i = 0; i < 255 && temp_count < MAX_TOTP_CRED; i++) {
+        file_t *ef = search_dynamic_file((uint16_t)(0xBA00 + i));
+        if (file_has_data(ef)) {
+            const uint8_t *ef_data = file_get_data(ef);
+            size_t ef_len = file_get_size(ef);
+
+            asn1_ctx_t ctx;
+            asn1_ctx_init((uint8_t *)ef_data, (uint16_t)ef_len, &ctx);
+
+            asn1_ctx_t key_ctx;
+            if (asn1_find_tag(&ctx, TAG_KEY, &key_ctx) == true) {
+                if ((key_ctx.data[0] & OATH_TYPE_MASK) == OATH_TYPE_TOTP) {
+                    temp_count++;
+                }
+            }
+        }
+    }
+
+    if (temp_count == 0) {
+        return;
+    }
+
+    totp_creds = (totp_cred_t *)malloc(temp_count * sizeof(totp_cred_t));
+    if (totp_creds == NULL) {
+        return;
+    }
+
+    memset(totp_creds, 0, temp_count * sizeof(totp_cred_t));
+
+    for (int i = 0; i < 255 && num_totp_creds < temp_count; i++) {
         file_t *ef = search_dynamic_file((uint16_t)(0xBA00 + i));
         if (file_has_data(ef)) {
             const uint8_t *ef_data = file_get_data(ef);
@@ -267,7 +301,7 @@ static void draw_three_totp_lines(void) {
         line_texts[i + 1][0] = '\0';
         int current_len = 0;
         int cred_idx = i;
-        while (cred_idx < num_totp_creds) {
+        while (cred_idx < num_totp_creds && totp_creds != NULL) {
             char otp[12];
             int otp_len = 0;
             calculate_totp(totp_creds[cred_idx].key, totp_creds[cred_idx].key_len, time_val, otp, &otp_len);
