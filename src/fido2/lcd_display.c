@@ -297,24 +297,38 @@ static void draw_three_totp_lines(void) {
         }
     }
 
+    int max_positions = 0;
+    for (int i = 0; i < NUM_LINES - 1; i++) {
+        int cred_idx = i;
+        int positions = 0;
+        while (cred_idx < num_totp_creds) {
+            positions++;
+            cred_idx += (NUM_LINES - 1);
+        }
+        if (positions > max_positions) {
+            max_positions = positions;
+        }
+    }
+
     for (int i = 0; i < NUM_LINES - 1; i++) {
         line_texts[i + 1][0] = '\0';
         int current_len = 0;
         int cred_idx = i;
-        while (cred_idx < num_totp_creds && totp_creds != NULL) {
-            char otp[12];
-            int otp_len = 0;
-            calculate_totp(totp_creds[cred_idx].key, totp_creds[cred_idx].key_len, time_val, otp, &otp_len);
+        for (int pos = 0; pos < max_positions; pos++) {
             char single_line[64];
-            snprintf(single_line, sizeof(single_line), "%-12s: %-8s  ", totp_creds[cred_idx].name, otp);
+            if (cred_idx < num_totp_creds && totp_creds != NULL) {
+                char otp[12];
+                int otp_len = 0;
+                calculate_totp(totp_creds[cred_idx].key, totp_creds[cred_idx].key_len, time_val, otp, &otp_len);
+                snprintf(single_line, sizeof(single_line), "%-12s: %-8s  ", totp_creds[cred_idx].name, otp);
+            } else {
+                snprintf(single_line, sizeof(single_line), "%-12s: %-8s  ", "--", "--");
+            }
             if (current_len + strlen(single_line) < sizeof(line_texts[i + 1])) {
                 strcat(line_texts[i + 1], single_line);
                 current_len += strlen(single_line);
             }
             cred_idx += (NUM_LINES - 1);
-        }
-        if (current_len == 0) {
-            strcpy(line_texts[i + 1], "-- ");
         }
         line_text_lens[i + 1] = strlen(line_texts[i + 1]);
     }
