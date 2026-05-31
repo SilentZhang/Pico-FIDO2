@@ -262,15 +262,6 @@ static void draw_three_totp_lines(void) {
             find_totp_credentials();
         }
 
-        bool synced = is_time_synced();
-
-        if (synced) {
-            snprintf(line_texts[0], sizeof(line_texts[0]), "[*] %lus", (unsigned long)remaining);
-        } else {
-            snprintf(line_texts[0], sizeof(line_texts[0]), "[ ] %lus", (unsigned long)remaining);
-        }
-        line_text_lens[0] = strlen(line_texts[0]);
-
         for (int i = 0; i < NUM_LINES - 1; i++) {
             if (i < num_totp_creds) {
                 char otp[12];
@@ -283,6 +274,14 @@ static void draw_three_totp_lines(void) {
             line_text_lens[i + 1] = strlen(line_texts[i + 1]);
         }
     }
+
+    bool synced = is_time_synced();
+    if (synced) {
+        snprintf(line_texts[0], sizeof(line_texts[0]), "[*] %lus", (unsigned long)remaining);
+    } else {
+        snprintf(line_texts[0], sizeof(line_texts[0]), "[ ] %lus", (unsigned long)remaining);
+    }
+    line_text_lens[0] = strlen(line_texts[0]);
 
     fill_text_buffer_black();
     sFONT *font = &Font16;
