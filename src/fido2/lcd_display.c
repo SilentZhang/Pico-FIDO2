@@ -34,10 +34,10 @@
 
 extern const mbedtls_md_info_t *get_oath_md_info(uint8_t alg);
 
-#define LINE_HEIGHT 24
-#define NUM_LINES 3
+#define LINE_HEIGHT 19
+#define NUM_LINES 5
 #define TOTP_PERIOD 30
-#define MAX_TOTP_CRED 3
+#define MAX_TOTP_CRED 5
 
 #define TAG_NAME            0x71
 #define TAG_KEY             0x73
@@ -254,82 +254,91 @@ static void draw_three_totp_lines(void) {
     time_t now_sec = get_rtc_time();
     uint64_t time_val = (uint64_t) now_sec / TOTP_PERIOD;
     uint32_t remaining = TOTP_PERIOD - ((uint32_t) now_sec % TOTP_PERIOD);
-    
-    // 更新文本内容
+
     if (time_val != last_totp_time || num_totp_creds == 0) {
         last_totp_time = (uint32_t) time_val;
-        
+
         if (num_totp_creds == 0) {
             find_totp_credentials();
         }
-        
+
         bool synced = is_time_synced();
-        
-        for (int i = 0; i < NUM_LINES; i++) {
+
+        if (synced) {
+            snprintf(line_texts[0], sizeof(line_texts[0]), "[*] %lus", (unsigned long)remaining);
+        } else {
+            snprintf(line_texts[0], sizeof(line_texts[0]), "[ ] %lus", (unsigned long)remaining);
+        }
+        line_text_lens[0] = strlen(line_texts[0]);
+
+        for (int i = 0; i < NUM_LINES - 1; i++) {
             if (i < num_totp_creds) {
                 char otp[12];
                 int otp_len = 0;
                 calculate_totp(totp_creds[i].key, totp_creds[i].key_len, time_val, otp, &otp_len);
-                
-                if (i == 0 && synced) {
-                    snprintf(line_texts[i], sizeof(line_texts[i]), "[*] %.20s: %s (%lus)", totp_creds[i].name, otp, (unsigned long)remaining);
-                } else if (i == 0) {
-                    snprintf(line_texts[i], sizeof(line_texts[i]), "[ ] %.20s: %s (%lus)", totp_creds[i].name, otp, (unsigned long)remaining);
-                } else {
-                    snprintf(line_texts[i], sizeof(line_texts[i]), "    %.20s: %s", totp_creds[i].name, otp);
-                }
+                snprintf(line_texts[i + 1], sizeof(line_texts[i + 1]), "%.20s: %s", totp_creds[i].name, otp);
             } else {
-                strcpy(line_texts[i], "    -");
+                strcpy(line_texts[i + 1], "-");
             }
-            line_text_lens[i] = strlen(line_texts[i]);
+            line_text_lens[i + 1] = strlen(line_texts[i + 1]);
         }
     }
 
     fill_text_buffer_black();
-    sFONT *font = &Font24;
+    sFONT *font = &Font16;
     int char_width = font->Width;
-    
-    // 计算滚动偏移
+
     int scroll_chars = (int)(text_offset / char_width);
     float char_fraction = (text_offset - scroll_chars * char_width) / (float)char_width;
     int start_x = -(int)(char_fraction * char_width);
-    
-    // 绘制三行文字，都应用滚动效果
+
     for (int line_idx = 0; line_idx < NUM_LINES; line_idx++) {
         char *scroll_text = line_texts[line_idx];
         int text_len = line_text_lens[line_idx];
         int y_pos = line_idx * LINE_HEIGHT;
-        
-        float line_rainbow_offset = rainbow_offset + (float)line_idx / NUM_LINES;
-        
-        for (int i = 0; i < text_len + 2; i++) {
-            int idx = (scroll_chars + i) % text_len;
-            char ch = scroll_text[idx];
-            
-            int x_pos = start_x + i * char_width;
-            if (x_pos > (int)LCD_1IN47.WIDTH) continue;
-            if (x_pos + char_width < 0) continue;
-            
-            float color_ratio = (float)(scroll_chars + i) / (float)text_len;
-            color_ratio += line_rainbow_offset;
-            while (color_ratio > 1.0f) color_ratio -= 1.0f;
-            
-            UWORD color;
-            get_rainbow_color(color_ratio, &color);
-            
-            draw_char_to_buffer((UWORD)x_pos, (UWORD)y_pos, ch, font, color);
+
+        if (line_idx == 0) {
+            for (int i = 0; i < text_len; i++) {
+                char ch = scroll_text[i];
+                int x_pos = i * char_width;
+                if (x_pos > (int)LCD_1IN47.WIDTH) break;
+                if (x_pos + char_width < 0) continue;
+
+                UWORD color = rgb_to_565(255, 255, 255);
+                draw_char_to_buffer((UWORD)x_pos, (UWORD)y_pos, ch, font, color);
+            }
+        } else {
+            float line_rainbow_offset = rainbow_offset + (float)line_idx / NUM_LINES;
+
+            for (int i = 0; i < text_len + 2; i++) {
+                int idx = (scroll_chars + i) % text_len;
+                char ch = scroll_text[idx];
+
+                int x_pos = start_x + i * char_width;
+                if (x_pos > (int)LCD_1IN47.WIDTH) continue;
+                if (x_pos + char_width < 0) continue;
+
+                float color_ratio = (float)(scroll_chars + i) / (float)text_len;
+                color_ratio += line_rainbow_offset;
+                while (color_ratio > 1.0f) color_ratio -= 1.0f;
+
+                UWORD color;
+                get_rainbow_color(color_ratio, &color);
+
+                draw_char_to_buffer((UWORD)x_pos, (UWORD)y_pos, ch, font, color);
+            }
         }
     }
-    
+
     rainbow_offset += 0.005f;
     if (rainbow_offset >= 1.0f) rainbow_offset = 0.0f;
-    
+
     text_offset += 2.0f;
     int max_len = 0;
-    for (int i = 0; i < NUM_LINES; i++) {
+    for (int i = 1; i < NUM_LINES; i++) {
         if (line_text_lens[i] > max_len) max_len = line_text_lens[i];
     }
-    if (text_offset >= char_width * max_len) {
+    if (max_len > 0 && text_offset >= char_width * max_len) {
         text_offset = 0.0f;
     }
 }
@@ -378,18 +387,25 @@ int lcd_display_red(void) {
         return -1;
     }
 
-    // 初始化
     find_totp_credentials();
-    
-    for (int i = 0; i < NUM_LINES; i++) {
-        if (i < num_totp_creds) {
-            strcpy(line_texts[i], "Loading...");
-        } else {
-            strcpy(line_texts[i], "    -");
-        }
-        line_text_lens[i] = strlen(line_texts[i]);
+
+    bool synced = is_time_synced();
+    if (synced) {
+        snprintf(line_texts[0], sizeof(line_texts[0]), "[*] --");
+    } else {
+        snprintf(line_texts[0], sizeof(line_texts[0]), "[ ] --");
     }
-    
+    line_text_lens[0] = strlen(line_texts[0]);
+
+    for (int i = 0; i < NUM_LINES - 1; i++) {
+        if (i < num_totp_creds) {
+            strcpy(line_texts[i + 1], "Loading...");
+        } else {
+            strcpy(line_texts[i + 1], "-");
+        }
+        line_text_lens[i + 1] = strlen(line_texts[i + 1]);
+    }
+
     draw_three_totp_lines();
     flush_buffer_to_lcd();
     
