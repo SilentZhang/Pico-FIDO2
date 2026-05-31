@@ -60,7 +60,6 @@ static float text_offset = 0.0f;
 static char line_texts[NUM_LINES][128];
 static int line_text_lens[NUM_LINES];
 static uint32_t last_totp_time = 0;
-static int current_batch = 0;
 
 static UWORD rgb_to_565(UBYTE r, UBYTE g, UBYTE b) {
     return ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
@@ -262,19 +261,26 @@ static void draw_three_totp_lines(void) {
         if (num_totp_creds == 0) {
             find_totp_credentials();
         }
-
-        current_batch = 0;
     }
 
     for (int i = 0; i < NUM_LINES - 1; i++) {
-        int cred_idx = current_batch * (NUM_LINES - 1) + i;
-        if (cred_idx < num_totp_creds) {
+        line_texts[i + 1][0] = '\0';
+        int current_len = 0;
+        int cred_idx = i;
+        while (cred_idx < num_totp_creds) {
             char otp[12];
             int otp_len = 0;
             calculate_totp(totp_creds[cred_idx].key, totp_creds[cred_idx].key_len, time_val, otp, &otp_len);
-            snprintf(line_texts[i + 1], sizeof(line_texts[i + 1]), "%-12s: %-8s", totp_creds[cred_idx].name, otp);
-        } else {
-            strcpy(line_texts[i + 1], "- ");
+            char single_line[64];
+            snprintf(single_line, sizeof(single_line), "%-12s: %-8s  ", totp_creds[cred_idx].name, otp);
+            if (current_len + strlen(single_line) < sizeof(line_texts[i + 1])) {
+                strcat(line_texts[i + 1], single_line);
+                current_len += strlen(single_line);
+            }
+            cred_idx += (NUM_LINES - 1);
+        }
+        if (current_len == 0) {
+            strcpy(line_texts[i + 1], "-- ");
         }
         line_text_lens[i + 1] = strlen(line_texts[i + 1]);
     }
@@ -285,16 +291,6 @@ static void draw_three_totp_lines(void) {
     int max_len = 0;
     for (int i = 1; i < NUM_LINES; i++) {
         if (line_text_lens[i] > max_len) max_len = line_text_lens[i];
-    }
-
-    if (max_len > 0 && text_offset >= char_width * max_len) {
-        text_offset = 0.0f;
-        if (num_totp_creds > 0) {
-            int total_batches = (num_totp_creds + (NUM_LINES - 2)) / (NUM_LINES - 1);
-            if (total_batches < 1) total_batches = 1;
-            current_batch++;
-            if (current_batch >= total_batches) current_batch = 0;
-        }
     }
 
     bool synced = is_time_synced();
@@ -353,8 +349,6 @@ static void draw_three_totp_lines(void) {
     if (rainbow_offset >= 1.0f) rainbow_offset = 0.0f;
 
     text_offset += 2.0f;
-
-    if (num_totp_creds <= 0) current_batch = 0;
 }
 
 static void flush_buffer_to_lcd(void) {
