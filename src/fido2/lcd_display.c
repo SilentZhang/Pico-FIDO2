@@ -320,9 +320,9 @@ static void draw_three_totp_lines(void) {
                 char otp[12];
                 int otp_len = 0;
                 calculate_totp(totp_creds[cred_idx].key, totp_creds[cred_idx].key_len, time_val, otp, &otp_len);
-                snprintf(single_line, sizeof(single_line), "%-12s: %-8s  ", totp_creds[cred_idx].name, otp);
+                snprintf(single_line, sizeof(single_line), "%-12s: %-8s | ", totp_creds[cred_idx].name, otp);
             } else {
-                snprintf(single_line, sizeof(single_line), "%-12s: %-8s  ", "--", "--");
+                snprintf(single_line, sizeof(single_line), "%-12s: %-8s | ", "--", "--");
             }
             if (current_len + strlen(single_line) < sizeof(line_texts[i + 1])) {
                 strcat(line_texts[i + 1], single_line);
