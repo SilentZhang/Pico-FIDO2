@@ -276,7 +276,7 @@ static void draw_three_totp_lines(void) {
                 char otp[12];
                 int otp_len = 0;
                 calculate_totp(totp_creds[i].key, totp_creds[i].key_len, time_val, otp, &otp_len);
-                snprintf(line_texts[i + 1], sizeof(line_texts[i + 1]), "%.20s: %s", totp_creds[i].name, otp);
+                snprintf(line_texts[i + 1], sizeof(line_texts[i + 1]), "%-12s: %-8s", totp_creds[i].name, otp);
             } else {
                 strcpy(line_texts[i + 1], "-");
             }
