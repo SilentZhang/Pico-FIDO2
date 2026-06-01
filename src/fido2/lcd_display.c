@@ -63,6 +63,15 @@ static char line_texts[NUM_LINES][128];
 static int line_text_lens[NUM_LINES];
 static uint32_t last_totp_time = 0;
 
+// --- 新增：TOTP 字符串缓存结构 ---
+typedef struct {
+    char cached_line[128];
+    int cached_len;
+} totp_cache_t;
+
+static totp_cache_t totp_output_cache[NUM_LINES];
+static time_t last_cached_sec = 0; // 记录上一次计算密码时的绝对秒数
+
 static UWORD rgb_to_565(UBYTE r, UBYTE g, UBYTE b) {
     return ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
 }
@@ -291,53 +300,68 @@ static void draw_three_totp_lines(void) {
     uint64_t time_val = (uint64_t) now_sec / TOTP_PERIOD;
     uint32_t remaining = TOTP_PERIOD - ((uint32_t) now_sec % TOTP_PERIOD);
 
-    if (time_val != last_totp_time || num_totp_creds == 0) {
-        last_totp_time = (uint32_t) time_val;
+    // ==========================================
+    // 1. 慢速逻辑：只有秒数变化时，才重新计算密码并写入缓存
+    // ==========================================
+    if (now_sec != last_cached_sec) {
+        last_cached_sec = now_sec; // 更新缓存时间戳
 
-        if (num_totp_creds == 0) {
-            find_totp_credentials();
+        if (time_val != last_totp_time || num_totp_creds == 0) {
+            last_totp_time = (uint32_t) time_val;
+            if (num_totp_creds == 0) {
+                find_totp_credentials();
+            }
         }
 
-        if (totp_creds != NULL) {
-            for (int i = 0; i < num_totp_creds; i++) {
-                int otp_len = 0;
-                calculate_totp(totp_creds[i].key, totp_creds[i].key_len, time_val, totp_creds[i].current_otp, &otp_len);
-                totp_creds[i].otp_time = (uint32_t)time_val;
+        int max_positions = 0;
+        for (int i = 0; i < NUM_LINES - 1; i++) {
+            int cred_idx = i;
+            int positions = 0;
+            while (cred_idx < num_totp_creds) {
+                positions++;
+                cred_idx += (NUM_LINES - 1);
             }
+            if (positions > max_positions) {
+                max_positions = positions;
+            }
+        }
+
+        for (int i = 0; i < NUM_LINES - 1; i++) {
+            char temp_buf[128] = "";
+            int current_len = 0;
+            int cred_idx = i;
+
+            for (int pos = 0; pos < max_positions; pos++) {
+                char single_line[64];
+                if (cred_idx < num_totp_creds && totp_creds != NULL) {
+                    char otp[12];
+                    int otp_len = 0;
+                    // 核心优化：只在此处触发 HMAC，每秒仅 1 次
+                    calculate_totp(totp_creds[cred_idx].key, totp_creds[cred_idx].key_len, time_val, otp, &otp_len);
+                    snprintf(single_line, sizeof(single_line), "%-12s: %-8s  ", totp_creds[cred_idx].name, otp);
+                } else {
+                    snprintf(single_line, sizeof(single_line), "%-12s: %-8s  ", "--", "--");
+                }
+                if (current_len + strlen(single_line) < sizeof(temp_buf)) {
+                    strcat(temp_buf, single_line);
+                    current_len += strlen(single_line);
+                }
+                cred_idx += (NUM_LINES - 1);
+            }
+            // 写入本地全局缓存区
+            strncpy(totp_output_cache[i + 1].cached_line, temp_buf, sizeof(totp_output_cache[i + 1].cached_line));
+            totp_output_cache[i + 1].cached_len = current_len;
         }
     }
 
-    int max_positions = 0;
-    for (int i = 0; i < NUM_LINES - 1; i++) {
-        int cred_idx = i;
-        int positions = 0;
-        while (cred_idx < num_totp_creds) {
-            positions++;
-            cred_idx += (NUM_LINES - 1);
-        }
-        if (positions > max_positions) {
-            max_positions = positions;
-        }
-    }
-
-    for (int i = 0; i < NUM_LINES - 1; i++) {
-        line_texts[i + 1][0] = '\0';
-        int current_len = 0;
-        int cred_idx = i;
-        for (int pos = 0; pos < max_positions; pos++) {
-            char single_line[64];
-            if (cred_idx < num_totp_creds && totp_creds != NULL) {
-                snprintf(single_line, sizeof(single_line), "%-12s: %-8s | ", totp_creds[cred_idx].name, totp_creds[cred_idx].current_otp);
-            } else {
-                snprintf(single_line, sizeof(single_line), "%-12s: %-8s | ", "--", "--");
-            }
-            if (current_len + strlen(single_line) < sizeof(line_texts[i + 1])) {
-                strcat(line_texts[i + 1], single_line);
-                current_len += strlen(single_line);
-            }
-            cred_idx += (NUM_LINES - 1);
-        }
-        line_text_lens[i + 1] = strlen(line_texts[i + 1]);
+    // ==========================================
+    // 2. 快速逻辑：每次定时器（50ms）均执行的渲染/滚动动画
+    // ==========================================
+    
+    // 从已经计算好的缓存中读取文本
+    for (int i = 1; i < NUM_LINES; i++) {
+        strcpy(line_texts[i], totp_output_cache[i].cached_line);
+        line_text_lens[i] = totp_output_cache[i].cached_len;
     }
 
     sFONT *font = &Font16;
@@ -348,6 +372,7 @@ static void draw_three_totp_lines(void) {
         if (line_text_lens[i] > max_len) max_len = line_text_lens[i];
     }
 
+    // 动态更新首行时间倒计时
     bool synced = is_time_synced();
     if (synced) {
         snprintf(line_texts[0], sizeof(line_texts[0]), "[*] %lus", (unsigned long)remaining);
@@ -356,6 +381,7 @@ static void draw_three_totp_lines(void) {
     }
     line_text_lens[0] = strlen(line_texts[0]);
 
+    // 清空绘图缓冲区
     fill_text_buffer_black();
 
     int scroll_chars = (int)(text_offset / char_width);
@@ -400,11 +426,13 @@ static void draw_three_totp_lines(void) {
         }
     }
 
+    // 步进彩虹色与滚动偏移量
     rainbow_offset += 0.005f;
     if (rainbow_offset >= 1.0f) rainbow_offset = 0.0f;
 
     text_offset += 2.0f;
-
+    
+    // 如果滚出了当前最大文本宽度，循环复位
     int max_scroll_width = max_len * char_width;
     if (max_scroll_width > 0 && text_offset >= max_scroll_width) {
         text_offset = 0.0f;
