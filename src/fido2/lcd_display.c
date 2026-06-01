@@ -49,6 +49,8 @@ typedef struct {
     uint8_t key[64];
     int key_len;
     char name[32];
+    char current_otp[12];
+    uint32_t otp_time;
 } totp_cred_t;
 
 static UBYTE *text_buffer = NULL;
@@ -295,6 +297,14 @@ static void draw_three_totp_lines(void) {
         if (num_totp_creds == 0) {
             find_totp_credentials();
         }
+
+        if (totp_creds != NULL) {
+            for (int i = 0; i < num_totp_creds; i++) {
+                int otp_len = 0;
+                calculate_totp(totp_creds[i].key, totp_creds[i].key_len, time_val, totp_creds[i].current_otp, &otp_len);
+                totp_creds[i].otp_time = (uint32_t)time_val;
+            }
+        }
     }
 
     int max_positions = 0;
@@ -317,10 +327,7 @@ static void draw_three_totp_lines(void) {
         for (int pos = 0; pos < max_positions; pos++) {
             char single_line[64];
             if (cred_idx < num_totp_creds && totp_creds != NULL) {
-                char otp[12];
-                int otp_len = 0;
-                calculate_totp(totp_creds[cred_idx].key, totp_creds[cred_idx].key_len, time_val, otp, &otp_len);
-                snprintf(single_line, sizeof(single_line), "%-12s: %-8s | ", totp_creds[cred_idx].name, otp);
+                snprintf(single_line, sizeof(single_line), "%-12s: %-8s | ", totp_creds[cred_idx].name, totp_creds[cred_idx].current_otp);
             } else {
                 snprintf(single_line, sizeof(single_line), "%-12s: %-8s | ", "--", "--");
             }
@@ -471,7 +478,7 @@ int lcd_display_red(void) {
     flush_buffer_to_lcd();
     
 #ifdef PICO_PLATFORM
-    add_repeating_timer_ms(20, lcd_animation_callback, NULL, &lcd_timer);
+    add_repeating_timer_ms(50, lcd_animation_callback, NULL, &lcd_timer);
 #endif
 
     printf("[INFO] LCD animation started!\n");
