@@ -54,6 +54,11 @@ typedef struct {
 } totp_cred_t;
 
 static UBYTE *text_buffer = NULL;
+// --- 新增：彩虹色查找表配置 ---
+#define RAINBOW_LUT_SIZE  256  // 预计算 256 种彩虹渐变色
+static UWORD rainbow_lut[RAINBOW_LUT_SIZE];
+static bool lut_initialized = false;
+
 static struct repeating_timer lcd_timer;
 static totp_cred_t *totp_creds = NULL;
 static int num_totp_creds = 0;
@@ -76,42 +81,46 @@ static UWORD rgb_to_565(UBYTE r, UBYTE g, UBYTE b) {
     return ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
 }
 
-static void get_rainbow_color(float ratio, UWORD *color) {
-    UBYTE r, g, b;
+// --- 新增：启动时一次性生成彩虹色表 ---
+static void init_rainbow_lut(void) {
+    for (int i = 0; i < RAINBOW_LUT_SIZE; i++) {
+        float ratio = (float)i / (float)RAINBOW_LUT_SIZE;
+        UBYTE r, g, b;
 
-    if (ratio < 1.0f / 6.0f) {
-        float t = ratio * 6.0f;
-        r = 255;
-        g = (UBYTE)(t * 165);
-        b = 0;
-    } else if (ratio < 2.0f / 6.0f) {
-        float t = (ratio - 1.0f / 6.0f) * 6.0f;
-        r = 255;
-        g = 165 + (UBYTE)(t * (255 - 165));
-        b = 0;
-    } else if (ratio < 3.0f / 6.0f) {
-        float t = (ratio - 2.0f / 6.0f) * 6.0f;
-        r = 255 - (UBYTE)(t * 255);
-        g = 255;
-        b = 0;
-    } else if (ratio < 4.0f / 6.0f) {
-        float t = (ratio - 3.0f / 6.0f) * 6.0f;
-        r = 0;
-        g = 255;
-        b = (UBYTE)(t * 255);
-    } else if (ratio < 5.0f / 6.0f) {
-        float t = (ratio - 4.0f / 6.0f) * 6.0f;
-        r = 0;
-        g = 255 - (UBYTE)(t * 255);
-        b = 255;
-    } else {
-        float t = (ratio - 5.0f / 6.0f) * 6.0f;
-        r = (UBYTE)(t * 128);
-        g = 0;
-        b = 255;
+        if (ratio < 1.0f / 6.0f) {
+            float t = ratio * 6.0f; r = 255; g = (UBYTE)(t * 165); b = 0;
+        } else if (ratio < 2.0f / 6.0f) {
+            float t = (ratio - 1.0f / 6.0f) * 6.0f; r = 255; g = 165 + (UBYTE)(t * (255 - 165)); b = 0;
+        } else if (ratio < 3.0f / 6.0f) {
+            float t = (ratio - 2.0f / 6.0f) * 6.0f; r = 255 - (UBYTE)(t * 255); g = 255; b = 0;
+        } else if (ratio < 4.0f / 6.0f) {
+            float t = (ratio - 3.0f / 6.0f) * 6.0f; r = 0; g = 255; b = (UBYTE)(t * 255);
+        } else if (ratio < 5.0f / 6.0f) {
+            float t = (ratio - 4.0f / 6.0f) * 6.0f; r = 0; g = 255 - (UBYTE)(t * 255); b = 255;
+        } else {
+            float t = (ratio - 5.0f / 6.0f) * 6.0f; r = (UBYTE)(t * 128); g = 0; b = 255;
+        }
+        
+        rainbow_lut[i] = rgb_to_565(r, g, b);
+    }
+    lut_initialized = true;
+}
+
+// --- 优化后的函数：纯整数查表，运算量降为 0 ---
+static void get_rainbow_color(float ratio, UWORD *color) {
+    if (!lut_initialized) {
+        init_rainbow_lut();
     }
 
-    *color = rgb_to_565(r, g, b);
+    // 将 0.0f ~ 1.0f 的浮点比例映射到 0 ~ 255 的整数索引
+    int index = (int)(ratio * (RAINBOW_LUT_SIZE - 1));
+    
+    // 防御性边界检查
+    if (index < 0) index = 0;
+    if (index >= RAINBOW_LUT_SIZE) index = RAINBOW_LUT_SIZE - 1;
+
+    // 直接取值，没有任何判断和乘除法
+    *color = rainbow_lut[index];
 }
 
 static void set_pixel_in_buffer(UWORD x, UWORD y, UWORD color) {
