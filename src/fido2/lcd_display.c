@@ -302,20 +302,19 @@ static bool is_time_synced(void) {
 
 static void draw_three_totp_lines(void) {
     time_t now_sec = get_rtc_time();
+    // 当前处于第几个 30 秒的周期（时间步长）
     uint64_t time_val = (uint64_t) now_sec / TOTP_PERIOD;
     uint32_t remaining = TOTP_PERIOD - ((uint32_t) now_sec % TOTP_PERIOD);
 
     // ==========================================
-    // 慢速逻辑：一秒钟只触发一次复杂密码学及解包计算
+    // 维度 1：【每 30 秒】才触发一次的极慢逻辑
+    // 只有当 30 秒周期更替，或者账号列表为空时才重新计算 HMAC
     // ==========================================
-    if (now_sec != last_cached_sec) {
-        last_cached_sec = now_sec;
-
-        if (time_val != last_totp_time || num_totp_creds == 0) {
-            last_totp_time = (uint32_t) time_val;
-            if (num_totp_creds == 0) {
-                find_totp_credentials();
-            }
+    if (time_val != last_totp_time || num_totp_creds == 0) {
+        last_totp_time = (uint32_t) time_val;
+        
+        if (num_totp_creds == 0) {
+            find_totp_credentials();
         }
 
         int max_positions = 0;
@@ -331,6 +330,7 @@ static void draw_three_totp_lines(void) {
             }
         }
 
+        // 30 秒才遍历一次账号，计算密码并写入缓存
         for (int i = 0; i < NUM_LINES - 1; i++) {
             char temp_buf[128] = "";
             int current_len = 0;
@@ -341,6 +341,7 @@ static void draw_three_totp_lines(void) {
                 if (cred_idx < num_totp_creds && totp_creds != NULL) {
                     char otp[12];
                     int otp_len = 0;
+                    // 【终极优化：HMAC-SHA1 算法的调用频率从每秒 1 次，直接降到了每 30 秒 1 次！】
                     calculate_totp(totp_creds[cred_idx].key, totp_creds[cred_idx].key_len, time_val, otp, &otp_len);
                     snprintf(single_line, sizeof(single_line), "%-12s: %-8s  ", totp_creds[cred_idx].name, otp);
                 } else {
@@ -352,14 +353,33 @@ static void draw_three_totp_lines(void) {
                 }
                 cred_idx += (NUM_LINES - 1);
             }
+            // 写入本地全局缓存区
             strncpy(totp_output_cache[i + 1].cached_line, temp_buf, sizeof(totp_output_cache[i + 1].cached_line));
             totp_output_cache[i + 1].cached_len = current_len;
         }
     }
 
     // ==========================================
-    // 快速动画逻辑：200ms 高效纯整数渲染
+    // 维度 2：【每 1 秒】才触发一次的较慢逻辑
+    // 只有绝对秒数发生变化时，才去更新第一行的倒计时文本
     // ==========================================
+    if (now_sec != last_cached_sec) {
+        last_cached_sec = now_sec; // 更新秒级时间戳
+
+        bool synced = is_time_synced();
+        if (synced) {
+            snprintf(line_texts[0], sizeof(line_texts[0]), "[*] %lus", (unsigned long)remaining);
+        } else {
+            snprintf(line_texts[0], sizeof(line_texts[0]), "[ ] %lus", (unsigned long)remaining);
+        }
+        line_text_lens[0] = strlen(line_texts[0]);
+    }
+
+    // ==========================================
+    // 维度 3：【每 200ms】触发一次的快速逻辑（纯渲染）
+    // ==========================================
+    
+    // 直接从 30 秒周期的缓存中拷贝算好的 TOTP 字符串
     for (int i = 1; i < NUM_LINES; i++) {
         strcpy(line_texts[i], totp_output_cache[i].cached_line);
         line_text_lens[i] = totp_output_cache[i].cached_len;
@@ -373,14 +393,7 @@ static void draw_three_totp_lines(void) {
         if (line_text_lens[i] > max_len) max_len = line_text_lens[i];
     }
 
-    bool synced = is_time_synced();
-    if (synced) {
-        snprintf(line_texts[0], sizeof(line_texts[0]), "[*] %lus", (unsigned long)remaining);
-    } else {
-        snprintf(line_texts[0], sizeof(line_texts[0]), "[ ] %lus", (unsigned long)remaining);
-    }
-    line_text_lens[0] = strlen(line_texts[0]);
-
+    // 清空绘图缓冲区
     fill_text_buffer_black();
 
     int scroll_chars = (int)(text_offset / char_width);
@@ -403,7 +416,7 @@ static void draw_three_totp_lines(void) {
                 draw_char_to_buffer((UWORD)x_pos, (UWORD)y_pos, ch, font, color);
             }
         } else {
-            // 纯整数彩虹基础坐标映射
+            // 纯整数彩虹渐变计算
             uint8_t line_color_offset = rainbow_idx_offset + (uint8_t)((line_idx * 255) / NUM_LINES);
 
             for (int i = 0; i < text_len + 2; i++) {
@@ -414,7 +427,6 @@ static void draw_three_totp_lines(void) {
                 if (x_pos > (int)LCD_1IN47.WIDTH) continue;
                 if (x_pos + char_width < 0) continue;
 
-                // 依靠 uint8_t 的 0~255 自动截断特性进行颜色位移
                 uint8_t char_color_pos = (uint8_t)((i * 255) / (text_len + 2));
                 uint8_t final_color_idx = line_color_offset + char_color_pos;
 
@@ -426,10 +438,10 @@ static void draw_three_totp_lines(void) {
         }
     }
 
-    // 整数索引递增步进
+    // 跑马灯动画步进
     rainbow_idx_offset += 2;
-
     text_offset += 2.0f;
+    
     int max_scroll_width = max_len * char_width;
     if (max_scroll_width > 0 && text_offset >= max_scroll_width) {
         text_offset = 0.0f;
