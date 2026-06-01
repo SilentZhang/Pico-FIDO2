@@ -397,6 +397,11 @@ static void draw_three_totp_lines(void) {
     if (rainbow_offset >= 1.0f) rainbow_offset = 0.0f;
 
     text_offset += 2.0f;
+
+    int max_scroll_width = max_len * char_width;
+    if (max_scroll_width > 0 && text_offset >= max_scroll_width) {
+        text_offset = 0.0f;
+    }
 }
 
 static void flush_buffer_to_lcd(void) {
