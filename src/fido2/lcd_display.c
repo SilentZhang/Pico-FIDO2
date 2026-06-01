@@ -180,27 +180,41 @@ static int calculate_totp(const uint8_t *key, size_t key_len, uint64_t time_val,
     size_t hmac_size = mbedtls_md_get_size(md_info);
     uint8_t offset = hmac[hmac_size - 1] & 0x0f;
 
-    uint8_t res_buf[4];
-    res_buf[0] = hmac[offset] & 0x7f;
-    res_buf[1] = hmac[offset + 1];
-    res_buf[2] = hmac[offset + 2];
-    res_buf[3] = hmac[offset + 3];
-
-    uint32_t otp_val = get_uint32_t_be(res_buf);
+    uint32_t otp_val = ((uint32_t)(hmac[offset] & 0x7f) << 24) |
+                       ((uint32_t)hmac[offset + 1] << 16) |
+                       ((uint32_t)hmac[offset + 2] << 8)  |
+                       ((uint32_t)hmac[offset + 3]);
 
     int digits = (key[1] & 0x0f);
     if (digits == 0) digits = 6;
     if (digits > 8) digits = 8;
 
+    // 根据要求的位数，进行模运算裁剪
     if (digits == 8) {
-        otp_val %= (uint32_t) 100000000;
-        sprintf(otp_out, "%08lu", (unsigned long) otp_val);
+        otp_val %= 100000000;
     } else {
-        otp_val %= (uint32_t) 1000000;
-        sprintf(otp_out, "%06lu", (unsigned long) otp_val);
+        otp_val %= 1000000;
     }
 
+    // ==========================================
+    // 改善点 1：用纯数学快速算法代替沉重的 sprintf
+    // ==========================================
+    int i = digits - 1;
+    while (i >= 0) {
+        otp_out[i] = (char)('0' + (otp_val % 10));
+        otp_val /= 10;
+        i--;
+    }
+    otp_out[digits] = '\0';
+
     *otp_len_out = digits;
+
+    // ==========================================
+    // 改善点 2：安全合规，主动擦除栈上的敏感哈希残留
+    // ==========================================
+    memset(hmac, 0, sizeof(hmac));
+    otp_val = 0;
+
     return 0;
 }
 
