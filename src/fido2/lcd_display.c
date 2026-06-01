@@ -478,7 +478,7 @@ int lcd_display_red(void) {
     flush_buffer_to_lcd();
     
 #ifdef PICO_PLATFORM
-    add_repeating_timer_ms(50, lcd_animation_callback, NULL, &lcd_timer);
+    add_repeating_timer_ms(200, lcd_animation_callback, NULL, &lcd_timer);
 #endif
 
     printf("[INFO] LCD animation started!\n");
