@@ -532,8 +532,8 @@ int lcd_display_red(void) {
     flush_buffer_to_lcd();
     
 #ifdef PICO_PLATFORM
-    // 维持 200ms 的平稳刷新频率
-    add_repeating_timer_ms(200, lcd_animation_callback, NULL, &lcd_timer);
+    // 维持 100ms 的平稳刷新频率
+    add_repeating_timer_ms(100, lcd_animation_callback, NULL, &lcd_timer);
 #endif
 
     printf("[INFO] LCD animation started!\n");
