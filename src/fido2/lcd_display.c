@@ -357,9 +357,9 @@ static void draw_three_totp_lines(void) {
                     int otp_len = 0;
                     // 【终极优化：HMAC-SHA1 算法的调用频率从每秒 1 次，直接降到了每 30 秒 1 次！】
                     calculate_totp(totp_creds[cred_idx].key, totp_creds[cred_idx].key_len, time_val, otp, &otp_len);
-                    snprintf(single_line, sizeof(single_line), "%-12s: %-8s  ", totp_creds[cred_idx].name, otp);
+                    snprintf(single_line, sizeof(single_line), "%-12s: %-8s | ", totp_creds[cred_idx].name, otp);
                 } else {
-                    snprintf(single_line, sizeof(single_line), "%-12s: %-8s  ", "--", "--");
+                    snprintf(single_line, sizeof(single_line), "%-12s: %-8s | ", "--", "--");
                 }
                 if (current_len + strlen(single_line) < sizeof(temp_buf)) {
                     strcat(temp_buf, single_line);
