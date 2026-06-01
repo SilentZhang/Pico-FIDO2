@@ -54,21 +54,26 @@ typedef struct {
 } totp_cred_t;
 
 static UBYTE *text_buffer = NULL;
-// --- 新增：彩虹色查找表配置 ---
+
+// ==========================================
+// 核心优化 1：彩虹色查找表 (LUT) 纯整数配置
+// ==========================================
 #define RAINBOW_LUT_SIZE  256  // 预计算 256 种彩虹渐变色
 static UWORD rainbow_lut[RAINBOW_LUT_SIZE];
 static bool lut_initialized = false;
+static uint8_t rainbow_idx_offset = 0; // 代替原来的 float rainbow_offset
 
 static struct repeating_timer lcd_timer;
 static totp_cred_t *totp_creds = NULL;
 static int num_totp_creds = 0;
-static float rainbow_offset = 0.0f;
 static float text_offset = 0.0f;
 static char line_texts[NUM_LINES][128];
 static int line_text_lens[NUM_LINES];
 static uint32_t last_totp_time = 0;
 
-// --- 新增：TOTP 字符串缓存结构 ---
+// ==========================================
+// 核心优化 2：TOTP 字符串慢速缓存结构
+// ==========================================
 typedef struct {
     char cached_line[128];
     int cached_len;
@@ -81,7 +86,7 @@ static UWORD rgb_to_565(UBYTE r, UBYTE g, UBYTE b) {
     return ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
 }
 
-// --- 新增：启动时一次性生成彩虹色表 ---
+// 启动时一次性生成彩虹色查找表（纯整数转换）
 static void init_rainbow_lut(void) {
     for (int i = 0; i < RAINBOW_LUT_SIZE; i++) {
         float ratio = (float)i / (float)RAINBOW_LUT_SIZE;
@@ -106,20 +111,11 @@ static void init_rainbow_lut(void) {
     lut_initialized = true;
 }
 
-// --- 优化后的函数：纯整数查表，运算量降为 0 ---
-static void get_rainbow_color(float ratio, UWORD *color) {
+// 纯整数查表接口，移除了任何浮点操作及边界条件判断
+static void get_rainbow_color_int(uint8_t index, UWORD *color) {
     if (!lut_initialized) {
         init_rainbow_lut();
     }
-
-    // 将 0.0f ~ 1.0f 的浮点比例映射到 0 ~ 255 的整数索引
-    int index = (int)(ratio * (RAINBOW_LUT_SIZE - 1));
-    
-    // 防御性边界检查
-    if (index < 0) index = 0;
-    if (index >= RAINBOW_LUT_SIZE) index = RAINBOW_LUT_SIZE - 1;
-
-    // 直接取值，没有任何判断和乘除法
     *color = rainbow_lut[index];
 }
 
@@ -310,10 +306,10 @@ static void draw_three_totp_lines(void) {
     uint32_t remaining = TOTP_PERIOD - ((uint32_t) now_sec % TOTP_PERIOD);
 
     // ==========================================
-    // 1. 慢速逻辑：只有秒数变化时，才重新计算密码并写入缓存
+    // 慢速逻辑：一秒钟只触发一次复杂密码学及解包计算
     // ==========================================
     if (now_sec != last_cached_sec) {
-        last_cached_sec = now_sec; // 更新缓存时间戳
+        last_cached_sec = now_sec;
 
         if (time_val != last_totp_time || num_totp_creds == 0) {
             last_totp_time = (uint32_t) time_val;
@@ -345,7 +341,6 @@ static void draw_three_totp_lines(void) {
                 if (cred_idx < num_totp_creds && totp_creds != NULL) {
                     char otp[12];
                     int otp_len = 0;
-                    // 核心优化：只在此处触发 HMAC，每秒仅 1 次
                     calculate_totp(totp_creds[cred_idx].key, totp_creds[cred_idx].key_len, time_val, otp, &otp_len);
                     snprintf(single_line, sizeof(single_line), "%-12s: %-8s  ", totp_creds[cred_idx].name, otp);
                 } else {
@@ -357,17 +352,14 @@ static void draw_three_totp_lines(void) {
                 }
                 cred_idx += (NUM_LINES - 1);
             }
-            // 写入本地全局缓存区
             strncpy(totp_output_cache[i + 1].cached_line, temp_buf, sizeof(totp_output_cache[i + 1].cached_line));
             totp_output_cache[i + 1].cached_len = current_len;
         }
     }
 
     // ==========================================
-    // 2. 快速逻辑：每次定时器（50ms）均执行的渲染/滚动动画
+    // 快速动画逻辑：200ms 高效纯整数渲染
     // ==========================================
-    
-    // 从已经计算好的缓存中读取文本
     for (int i = 1; i < NUM_LINES; i++) {
         strcpy(line_texts[i], totp_output_cache[i].cached_line);
         line_text_lens[i] = totp_output_cache[i].cached_len;
@@ -381,7 +373,6 @@ static void draw_three_totp_lines(void) {
         if (line_text_lens[i] > max_len) max_len = line_text_lens[i];
     }
 
-    // 动态更新首行时间倒计时
     bool synced = is_time_synced();
     if (synced) {
         snprintf(line_texts[0], sizeof(line_texts[0]), "[*] %lus", (unsigned long)remaining);
@@ -390,7 +381,6 @@ static void draw_three_totp_lines(void) {
     }
     line_text_lens[0] = strlen(line_texts[0]);
 
-    // 清空绘图缓冲区
     fill_text_buffer_black();
 
     int scroll_chars = (int)(text_offset / char_width);
@@ -413,7 +403,8 @@ static void draw_three_totp_lines(void) {
                 draw_char_to_buffer((UWORD)x_pos, (UWORD)y_pos, ch, font, color);
             }
         } else {
-            float line_rainbow_offset = rainbow_offset + (float)line_idx / NUM_LINES;
+            // 纯整数彩虹基础坐标映射
+            uint8_t line_color_offset = rainbow_idx_offset + (uint8_t)((line_idx * 255) / NUM_LINES);
 
             for (int i = 0; i < text_len + 2; i++) {
                 int idx = (scroll_chars + i) % text_len;
@@ -423,25 +414,22 @@ static void draw_three_totp_lines(void) {
                 if (x_pos > (int)LCD_1IN47.WIDTH) continue;
                 if (x_pos + char_width < 0) continue;
 
-                float color_ratio = (float)(scroll_chars + i) / (float)text_len;
-                color_ratio += line_rainbow_offset;
-                while (color_ratio > 1.0f) color_ratio -= 1.0f;
+                // 依靠 uint8_t 的 0~255 自动截断特性进行颜色位移
+                uint8_t char_color_pos = (uint8_t)((i * 255) / (text_len + 2));
+                uint8_t final_color_idx = line_color_offset + char_color_pos;
 
                 UWORD color;
-                get_rainbow_color(color_ratio, &color);
+                get_rainbow_color_int(final_color_idx, &color);
 
                 draw_char_to_buffer((UWORD)x_pos, (UWORD)y_pos, ch, font, color);
             }
         }
     }
 
-    // 步进彩虹色与滚动偏移量
-    rainbow_offset += 0.005f;
-    if (rainbow_offset >= 1.0f) rainbow_offset = 0.0f;
+    // 整数索引递增步进
+    rainbow_idx_offset += 2;
 
     text_offset += 2.0f;
-    
-    // 如果滚出了当前最大文本宽度，循环复位
     int max_scroll_width = max_len * char_width;
     if (max_scroll_width > 0 && text_offset >= max_scroll_width) {
         text_offset = 0.0f;
@@ -481,7 +469,10 @@ int lcd_display_red(void) {
         return -1;
     }
 
-    DEV_SET_PWM(90);
+    // ==========================================
+    // 核心优化 3：将功耗极大的背光亮度从 90 降低到 40
+    // ==========================================
+    DEV_SET_PWM(40); 
     LCD_1IN47_Init(VERTICAL);
 
     LCD_1IN47_Clear(BLACK);
@@ -515,6 +506,7 @@ int lcd_display_red(void) {
     flush_buffer_to_lcd();
     
 #ifdef PICO_PLATFORM
+    // 维持 200ms 的平稳刷新频率
     add_repeating_timer_ms(200, lcd_animation_callback, NULL, &lcd_timer);
 #endif
 
